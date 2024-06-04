@@ -1,51 +1,9 @@
-import { Chart, dispose, init } from 'klinecharts';
+import { Chart, LoadDataParams, dispose, init } from 'klinecharts';
 import React from 'react';
 
 const KlineChart: React.FC = (): JSX.Element => {
   React.useEffect(() => {
-    const genData = (timestamp = new Date().getTime(), length = 800) => {
-      let basePrice = 5000;
-      timestamp =
-        Math.floor(timestamp / 1000 / 60) * 60 * 1000 - length * 60 * 1000;
-      const dataList = [];
-      for (let i = 0; i < length; i++) {
-        const prices = [];
-        for (let j = 0; j < 4; j++) {
-          prices.push(basePrice + Math.random() * 60 - 30);
-        }
-        prices.sort();
-        const open = +prices[Math.round(Math.random() * 3)].toFixed(2);
-        const high = +prices[3].toFixed(2);
-        const low = +prices[0].toFixed(2);
-        const close = +prices[Math.round(Math.random() * 3)].toFixed(2);
-        const volume = Math.round(Math.random() * 100) + 10;
-        const turnover = ((open + high + low + close) / 4) * volume;
-        dataList.push({ timestamp, open, high, low, close, volume, turnover });
-
-        basePrice = close;
-        timestamp += 60 * 1000;
-      }
-      return dataList;
-    };
-
-    const chart = init('k-line-chart') as Chart;
-
-    chart.applyNewData(genData());
-    chart.setStyles('dark');
-    chart.createIndicator('EMA', true, { id: 'candle_pane' });
-    chart.createIndicator('VOL');
-    chart.createIndicator('MACD');
-
-    chart.loadMore((timestamp: any) => {
-      setTimeout(() => {
-        chart.applyMoreData(genData(timestamp), true);
-      }, 2000);
-    });
-
-    chart.applyNewData(genData(), true);
-    updateData();
-
-    function updateData() {
+    function updateData(chart: Chart) {
       setTimeout(() => {
         const dataList = chart.getDataList();
         const lastData = dataList[dataList.length - 1];
@@ -55,9 +13,53 @@ const KlineChart: React.FC = (): JSX.Element => {
         newData.low = Math.min(newData.low, newData.close);
         newData.volume += Math.round(Math.random());
         chart.updateData(newData);
-        updateData();
+        updateData(chart);
       }, 100);
     }
+
+    const getBinanceData = async (timestamp: number) => {
+      const res = await fetch(
+        `https://api.binance.com/api/v3/uiKlines?symbol=BTCUSDT&timeZone=7&interval=15m&limit=1000&endTime=${timestamp}`
+      );
+      const data = await res.json();
+      return data?.map((item: any) => ({
+        timestamp: item[0],
+        open: Number(item[1]),
+        high: Number(item[2]),
+        low: Number(item[3]),
+        close: Number(item[4]),
+        volume: Number(item[5]),
+        turnover: Number(item[7]),
+      }));
+    };
+
+    (async () => {
+      try {
+        const klineData = await getBinanceData(Date.now());
+
+        const chart = init('k-line-chart') as Chart;
+
+        chart.applyNewData(klineData);
+
+        chart.setStyles('dark');
+        chart.createIndicator('EMA', true, { id: 'candle_pane' });
+        chart.createIndicator('VOL');
+        chart.createIndicator('MACD');
+
+        chart.setLoadDataCallback((params: LoadDataParams) => {
+          setTimeout(async () => {
+            const { data } = params;
+            const klineData = await getBinanceData(data?.timestamp as number);
+            chart.applyMoreData(klineData, true);
+          }, 1000);
+        });
+
+        updateData(chart);
+      } catch (error) {
+        console.log(error);
+        return null;
+      }
+    })();
 
     return () => {
       dispose('chart');
