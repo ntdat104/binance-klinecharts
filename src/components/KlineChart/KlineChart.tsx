@@ -1,22 +1,8 @@
-import { Chart, LoadDataParams, dispose, init } from 'klinecharts';
+import { Chart, Nullable, dispose, init } from 'klinecharts';
 import React from 'react';
 
 const KlineChart: React.FC = (): JSX.Element => {
   React.useEffect(() => {
-    function updateData(chart: Chart) {
-      setTimeout(() => {
-        const dataList = chart.getDataList();
-        const lastData = dataList[dataList.length - 1];
-        const newData: any = { ...lastData };
-        newData.close += Math.random() * 20 - 10;
-        newData.high = Math.max(newData.high, newData.close);
-        newData.low = Math.min(newData.low, newData.close);
-        newData.volume += Math.round(Math.random());
-        chart.updateData(newData);
-        updateData(chart);
-      }, 100);
-    }
-
     const getBinanceData = async (timestamp: number) => {
       const res = await fetch(
         `https://api.binance.com/api/v3/uiKlines?symbol=BTCUSDT&timeZone=7&interval=15m&limit=1000&endTime=${timestamp}`
@@ -46,15 +32,61 @@ const KlineChart: React.FC = (): JSX.Element => {
         chart.createIndicator('VOL');
         chart.createIndicator('MACD');
 
-        chart.setLoadDataCallback((params: LoadDataParams) => {
+        chart.loadMore((timestamp: Nullable<number>) => {
           setTimeout(async () => {
-            const { data } = params;
-            const klineData = await getBinanceData(data?.timestamp as number);
+            const klineData = await getBinanceData(timestamp as number);
             chart.applyMoreData(klineData, true);
-          }, 1000);
+          }, 400);
         });
 
-        updateData(chart);
+        const websocket = new WebSocket('wss://stream.binance.com:9443/ws');
+
+        websocket.onopen = () => {
+          websocket.send(
+            JSON.stringify({
+              method: 'SUBSCRIBE',
+              params: [`btcusdt@kline_15m`],
+              id: 1,
+            })
+          );
+        };
+
+        let lastBar: any = null;
+
+        websocket.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+
+          if (
+            message.e === 'kline' &&
+            message.k.i === '15m' &&
+            message.k.s === 'BTCUSDT'
+          ) {
+            const kline = message.k;
+            const bar = {
+              timestamp: kline.t,
+              open: parseFloat(kline.o),
+              high: parseFloat(kline.h),
+              low: parseFloat(kline.l),
+              close: parseFloat(kline.c),
+              volume: parseFloat(kline.v),
+            };
+
+            if (!lastBar || bar.timestamp > lastBar.timestamp) {
+              lastBar = bar;
+            } else if (bar.timestamp === lastBar.timestamp) {
+              lastBar = bar;
+            }
+            chart.updateData(lastBar);
+          }
+        };
+
+        websocket.onerror = (event) => {
+          console.error(event);
+        };
+
+        websocket.onclose = () => {
+          console.log('WebSocket closed');
+        };
       } catch (error) {
         console.log(error);
         return null;
